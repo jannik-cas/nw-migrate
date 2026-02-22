@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 
 def test_main_invokes_cli() -> None:
+    """Importing __main__ should call the CLI entry point."""
     with patch("nw_migrate.cli.main") as mock_main:
         sys.modules.pop("nw_migrate.__main__", None)
         importlib.import_module("nw_migrate.__main__")
