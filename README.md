@@ -1,5 +1,9 @@
 # nw-migrate
 
+[![CI](https://github.com/jannik-cas/nw-migrate/actions/workflows/ci.yml/badge.svg)](https://github.com/jannik-cas/nw-migrate/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/jannik-cas/nw-migrate/graph/badge.svg)](https://codecov.io/gh/jannik-cas/nw-migrate)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org)
+
 Convert Pandas code to [Narwhals](https://narwhals-dev.github.io/narwhals/) automatically.
 
 nw-migrate parses your Python files, renames Pandas method calls to their Narwhals equivalents, adds `@nw.narwhalify` decorators, and flags operations that need manual review.

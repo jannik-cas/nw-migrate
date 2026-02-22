@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import textwrap
 
+
 from nw_migrate.rules import Difficulty
-from nw_migrate.transformer import transform_source
+from nw_migrate.transformer import (
+    transform_source,
+)
 
 
 def _dedent(s: str) -> str:
@@ -40,6 +43,14 @@ class TestSortValues:
         result, _ = transform_source(source)
         assert "descending=False" in result
 
+    def test_ascending_variable(self) -> None:
+        source = _dedent("""\
+            def process(df, flag):
+                return df.sort_values('name', ascending=flag)
+        """)
+        result, _ = transform_source(source)
+        assert "descending=not flag" in result
+
     def test_by_kwarg_unwrapped(self) -> None:
         source = _dedent("""\
             def process(df):
@@ -48,6 +59,14 @@ class TestSortValues:
         result, _ = transform_source(source)
         assert "df.sort('name')" in result
         assert "by=" not in result
+
+    def test_unknown_kwarg_preserved(self) -> None:
+        source = _dedent("""\
+            def process(df):
+                return df.sort_values('name', key=str.lower)
+        """)
+        result, _ = transform_source(source)
+        assert "key=str.lower" in result
 
 
 class TestGroupby:
@@ -113,6 +132,24 @@ class TestSubscriptSelect:
         assert "df.select(['col1', 'col2'])" in result
         assert len(findings) == 1
 
+    def test_single_string_subscript_ignored(self) -> None:
+        source = _dedent("""\
+            def process(df):
+                return df['col1']
+        """)
+        result, findings = transform_source(source)
+        assert result == source
+        assert len(findings) == 0
+
+    def test_slice_subscript_ignored(self) -> None:
+        source = _dedent("""\
+            def process(df):
+                return df[0:5]
+        """)
+        result, findings = transform_source(source)
+        assert result == source
+        assert len(findings) == 0
+
 
 class TestDecorator:
     def test_added_to_converted_function(self) -> None:
@@ -123,7 +160,7 @@ class TestDecorator:
         result, _ = transform_source(source)
         assert "@nw.narwhalify" in result
 
-    def test_not_duplicated(self) -> None:
+    def test_not_duplicated_attribute(self) -> None:
         source = _dedent("""\
             import narwhals as nw
 
@@ -133,6 +170,30 @@ class TestDecorator:
         """)
         result, _ = transform_source(source)
         assert result.count("@nw.narwhalify") == 1
+
+    def test_not_duplicated_bare_name(self) -> None:
+        source = _dedent("""\
+            from narwhals import narwhalify
+
+            @narwhalify
+            def process(df):
+                return df.sort_values('name')
+        """)
+        result, _ = transform_source(source)
+        assert "@nw.narwhalify" not in result
+        assert result.count("narwhalify") >= 2  # import + decorator
+
+    def test_not_duplicated_call_form(self) -> None:
+        source = _dedent("""\
+            import narwhals as nw
+
+            @nw.narwhalify()
+            def process(df):
+                return df.sort_values('name')
+        """)
+        result, _ = transform_source(source)
+        assert result.count("@nw.narwhalify()") == 1
+        assert result.count("import narwhals as nw") == 1
 
     def test_not_added_to_non_converted(self) -> None:
         source = _dedent("""\
@@ -144,7 +205,6 @@ class TestDecorator:
         """)
         result, _ = transform_source(source)
         lines = result.splitlines()
-        # Find decorator and verify it's before process, not helper
         dec_idx = next(i for i, line in enumerate(lines) if "@nw.narwhalify" in line)
         func_idx = next(i for i in range(dec_idx, len(lines)) if "def " in lines[i])
         assert "process" in lines[func_idx]
@@ -182,6 +242,17 @@ class TestImport:
         nw_idx = next(i for i, line in enumerate(lines) if "import narwhals" in line)
         sys_idx = next(i for i, line in enumerate(lines) if "import sys" in line)
         assert nw_idx > sys_idx
+
+    def test_placed_at_top_when_no_imports(self) -> None:
+        source = _dedent("""\
+            def process(df):
+                return df.sort_values('name')
+        """)
+        result, _ = transform_source(source)
+        lines = result.splitlines()
+        nw_idx = next(i for i, line in enumerate(lines) if "import narwhals" in line)
+        func_idx = next(i for i, line in enumerate(lines) if "def " in line)
+        assert nw_idx < func_idx
 
 
 class TestMediumHardFlagging:
@@ -233,3 +304,78 @@ class TestChainedCalls:
         result, findings = transform_source(source)
         assert "df.sort('a').unique()" in result
         assert len(findings) == 2
+
+
+class TestNonAttributeCalls:
+    def test_plain_function_call_ignored(self) -> None:
+        source = _dedent("""\
+            def process(df):
+                result = len(df)
+                return df.sort_values('name')
+        """)
+        result, findings = transform_source(source)
+        assert "len(df)" in result
+        assert len(findings) == 1
+
+    def test_module_level_conversion(self) -> None:
+        source = _dedent("""\
+            result = df.sort_values('name')
+        """)
+        result, findings = transform_source(source)
+        assert "df.sort('name')" in result
+        assert "@nw.narwhalify" not in result
+        assert len(findings) == 1
+
+
+class TestSubscriptDuringTransform:
+    """Tests that hit leave_Subscript in the transformer (Pass 2)."""
+
+    def test_non_list_subscript_preserved(self) -> None:
+        """Covers leave_Subscript early return for non-list subscripts."""
+        source = _dedent("""\
+            def process(df):
+                x = df['col1']
+                return df.sort_values('name')
+        """)
+        result, _ = transform_source(source)
+        assert "df['col1']" in result
+        assert "df.sort('name')" in result
+
+    def test_multi_slice_subscript_preserved(self) -> None:
+        """Covers _is_list_subscript returning False for multi-slice."""
+        source = _dedent("""\
+            def process(df, arr):
+                x = arr[1:2, 3:4]
+                return df.sort_values('name')
+        """)
+        result, _ = transform_source(source)
+        assert "df.sort('name')" in result
+
+
+class TestHelpers:
+    """Direct tests for internal helper functions."""
+
+    def test_is_narwhalify_decorator_unknown_type(self) -> None:
+        """Covers the fallback return False in _is_narwhalify_decorator."""
+        import libcst as cst
+
+        from nw_migrate.transformer import _is_narwhalify_decorator
+
+        dec = cst.Decorator(decorator=cst.Integer("1"))
+        assert not _is_narwhalify_decorator(dec)
+
+    def test_transform_args_simple_rename(self) -> None:
+        """Covers the else branch in _transform_args (rename without invert)."""
+        import libcst as cst
+
+        from nw_migrate.rules import ArgTransform
+        from nw_migrate.transformer import _transform_args
+
+        arg = cst.Arg(
+            keyword=cst.Name("old_name"),
+            value=cst.Name("val"),
+        )
+        transforms = (ArgTransform(old_name="old_name", new_name="new_name"),)
+        result = _transform_args([arg], transforms)
+        assert result[0].keyword is not None
+        assert result[0].keyword.value == "new_name"

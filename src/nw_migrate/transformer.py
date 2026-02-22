@@ -69,15 +69,7 @@ class PandasCallCollector(cst.CSTVisitor):
 
     def visit_Subscript(self, node: cst.Subscript) -> bool:
         """Match df[['col1', 'col2']] — subscript with a List value."""
-        if not isinstance(node.slice, (list, tuple)) or len(node.slice) != 1:
-            return True
-
-        slice_el = node.slice[0]
-        if not isinstance(slice_el, cst.SubscriptElement):
-            return True
-        if not isinstance(slice_el.slice, cst.Index):
-            return True
-        if not isinstance(slice_el.slice.value, cst.List):
+        if not _is_list_subscript(node):
             return True
 
         pos = self.get_metadata(PositionProvider, node)
@@ -216,8 +208,6 @@ def _is_list_subscript(node: cst.Subscript) -> bool:
     if not isinstance(node.slice, (list, tuple)) or len(node.slice) != 1:
         return False
     slice_el = node.slice[0]
-    if not isinstance(slice_el, cst.SubscriptElement):
-        return False
     if not isinstance(slice_el.slice, cst.Index):
         return False
     return isinstance(slice_el.slice.value, cst.List)
