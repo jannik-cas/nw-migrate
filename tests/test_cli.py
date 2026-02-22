@@ -15,6 +15,7 @@ def _write_file(tmp_path: Path, content: str) -> Path:
 
 class TestCheck:
     def test_reports_findings(self, tmp_path: Path) -> None:
+        """Detected Pandas calls should be printed with difficulty tag and exit 1."""
         f = _write_file(tmp_path, "def p(df):\n    return df.sort_values('a')\n")
         runner = CliRunner()
         result = runner.invoke(main, ["check", str(f)])
@@ -23,6 +24,7 @@ class TestCheck:
         assert "sort_values" in result.output
 
     def test_clean_file(self, tmp_path: Path) -> None:
+        """A file with no Pandas calls should exit 0 with a reassuring message."""
         f = _write_file(tmp_path, "def add(a, b):\n    return a + b\n")
         runner = CliRunner()
         result = runner.invoke(main, ["check", str(f)])
@@ -30,6 +32,7 @@ class TestCheck:
         assert "No Pandas usages found" in result.output
 
     def test_quiet_mode(self, tmp_path: Path) -> None:
+        """Quiet mode suppresses per-finding output, only showing the count."""
         f = _write_file(tmp_path, "def p(df):\n    return df.sort_values('a')\n")
         runner = CliRunner()
         result = runner.invoke(main, ["check", "--quiet", str(f)])
@@ -38,6 +41,7 @@ class TestCheck:
         assert "Found 1" in result.output
 
     def test_directory(self, tmp_path: Path) -> None:
+        """Passing a directory should scan all .py files recursively, skip others."""
         (tmp_path / "a.py").write_text("def p(df):\n    return df.groupby('x')\n")
         (tmp_path / "b.txt").write_text("not python")
         runner = CliRunner()
@@ -48,6 +52,7 @@ class TestCheck:
 
 class TestConvert:
     def test_in_place(self, tmp_path: Path) -> None:
+        """Default convert writes the transformed code back to the file."""
         f = _write_file(tmp_path, "def p(df):\n    return df.sort_values('a')\n")
         runner = CliRunner()
         result = runner.invoke(main, ["convert", str(f)])
@@ -57,6 +62,7 @@ class TestConvert:
         assert "df.sort('a')" in converted
 
     def test_dry_run(self, tmp_path: Path) -> None:
+        """Dry-run prints the converted output but leaves the original file intact."""
         original = "def p(df):\n    return df.sort_values('a')\n"
         f = _write_file(tmp_path, original)
         runner = CliRunner()
@@ -66,6 +72,7 @@ class TestConvert:
         assert f.read_text() == original
 
     def test_diff(self, tmp_path: Path) -> None:
+        """Diff mode shows a unified diff of what would change."""
         f = _write_file(tmp_path, "def p(df):\n    return df.sort_values('a')\n")
         runner = CliRunner()
         result = runner.invoke(main, ["convert", "--diff", str(f)])
@@ -76,6 +83,7 @@ class TestConvert:
         assert "+    return df.sort" in result.output
 
     def test_no_changes_skipped(self, tmp_path: Path) -> None:
+        """Files with nothing to convert should produce no output at all."""
         f = _write_file(tmp_path, "def add(a, b):\n    return a + b\n")
         runner = CliRunner()
         result = runner.invoke(main, ["convert", str(f)])
@@ -83,6 +91,7 @@ class TestConvert:
         assert result.output == ""
 
     def test_flagged_count(self, tmp_path: Path) -> None:
+        """When a file has both EASY and MEDIUM calls, report both counts."""
         f = _write_file(
             tmp_path,
             "def p(df):\n    df.sort_values('a')\n    return df.fillna(0)\n",
@@ -95,6 +104,7 @@ class TestConvert:
 
 class TestVersion:
     def test_version(self) -> None:
+        """--version should print the installed package version."""
         from importlib.metadata import version
 
         runner = CliRunner()

@@ -58,6 +58,7 @@ RULES: dict[str, Rule] = {}
 
 
 def _register(*rules: Rule) -> None:
+    """Add one or more conversion rules to the global RULES registry."""
     for rule in rules:
         RULES[rule.pandas_method] = rule
 

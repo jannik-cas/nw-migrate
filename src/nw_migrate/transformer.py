@@ -136,8 +136,6 @@ class NarwhalsTransformer(cst.CSTTransformer):
         self.functions_needing_decorator = functions_needing_decorator
         self.conversions_made: int = 0
         self.needs_import: bool = False
-        self.todos: list[tuple[int, str]] = []
-        self._pos_map: dict[int, int] = {}
 
     def leave_FunctionDef(
         self,
