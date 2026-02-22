@@ -1,0 +1,5 @@
+- id: narwhalify-check
+  name: narwhalify check
+  entry: narwhalify check
+  language: python
+  types: [python]

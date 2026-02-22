@@ -1,0 +1,25 @@
+[project]
+name = "nw-migrate"
+version = "0.1.0"
+description = "Convert Pandas code to Narwhals automatically"
+readme = "README.md"
+authors = [
+    { name = "Jannik Castenow" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "libcst>=1.0",
+    "click>=8.0",
+]
+
+[project.scripts]
+nw-migrate = "nw_migrate.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
