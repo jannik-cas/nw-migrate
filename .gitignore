@@ -9,6 +9,10 @@ wheels/
 # Virtual environments
 .venv
 
-# Coverage
+# Testing and coverage
 .coverage
 coverage.xml
+.pytest_cache/
+
+# Linting
+.ruff_cache/

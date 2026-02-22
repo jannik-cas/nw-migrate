@@ -3,6 +3,9 @@
 [![CI](https://github.com/jannik-cas/nw-migrate/actions/workflows/ci.yml/badge.svg)](https://github.com/jannik-cas/nw-migrate/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/jannik-cas/nw-migrate/graph/badge.svg)](https://codecov.io/gh/jannik-cas/nw-migrate)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
 
 Convert Pandas code to [Narwhals](https://narwhals-dev.github.io/narwhals/) automatically.
 
@@ -132,6 +135,10 @@ repos:
 - Does not convert `pd.concat()` to `nw.concat()`.
 - Chained calls are converted independently — a chain mixing easy and hard operations will partially convert.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
+
 ## License
 
-MIT
+[MIT](LICENSE)
