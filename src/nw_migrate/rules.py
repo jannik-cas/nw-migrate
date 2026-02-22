@@ -5,6 +5,14 @@ from enum import Enum
 
 
 class Difficulty(Enum):
+    """How hard it is to mechanically convert a Pandas call to Narwhals.
+
+    EASY methods have a direct 1:1 mapping and can be auto-converted with
+    confidence. MEDIUM methods exist in Narwhals but require switching to
+    the expression API, so they need manual review. HARD methods have no
+    Narwhals equivalent at all and require a fundamentally different approach.
+    """
+
     EASY = "easy"
     MEDIUM = "medium"
     HARD = "hard"
@@ -12,16 +20,30 @@ class Difficulty(Enum):
 
 @dataclass(frozen=True)
 class ArgTransform:
-    """Describes how to transform a single keyword argument."""
+    """Describes how to transform a single keyword argument during conversion.
+
+    For example, Pandas sort_values() takes ascending=True, but Narwhals
+    sort() uses descending=False. This is represented as an ArgTransform
+    with old_name="ascending", new_name="descending", and invert_bool=True.
+
+    When new_name is None, the kwarg is unwrapped to a positional argument.
+    This handles cases like drop(columns=['a']) becoming drop('a'), where
+    the Narwhals API takes the same value but as a positional arg.
+    """
 
     old_name: str
-    new_name: str | None = None  # None = unwrap to positional
-    invert_bool: bool = False  # ascending=True -> descending=False
+    new_name: str | None = None
+    invert_bool: bool = False
 
 
 @dataclass(frozen=True)
 class Rule:
-    """A single Pandas -> Narwhals method conversion rule."""
+    """Maps a single Pandas method to its Narwhals equivalent.
+
+    Each rule captures the method name on both sides, the conversion
+    difficulty, any argument transformations needed, and a human-readable
+    description used in CLI output and TODO comments.
+    """
 
     pandas_method: str
     narwhals_method: str
@@ -30,6 +52,8 @@ class Rule:
     description: str = ""
 
 
+# Global registry of all conversion rules, keyed by Pandas method name.
+# Populated at module load time by _register() calls below.
 RULES: dict[str, Rule] = {}
 
 
@@ -38,7 +62,9 @@ def _register(*rules: Rule) -> None:
         RULES[rule.pandas_method] = rule
 
 
-# --- EASY: auto-convert ---
+# These Pandas methods have direct Narwhals equivalents and can be safely
+# auto-converted. The transformer renames the method and adjusts arguments
+# according to each rule's arg_transforms.
 
 _register(
     Rule(
@@ -85,7 +111,11 @@ _register(
     ),
 )
 
-# --- MEDIUM: flag with TODO ---
+# These methods exist in Narwhals but require switching from Pandas' method-call
+# style to Narwhals' expression-based API. For example, df.fillna(0) becomes
+# df.with_columns(nw.col('x').fill_null(0)). Because the transformation isn't
+# mechanical (you need to know which columns to target), we flag them with a
+# TODO comment instead of auto-converting.
 
 _register(
     Rule(
@@ -126,7 +156,10 @@ _register(
     ),
 )
 
-# --- HARD: flag only, no conversion ---
+# These Pandas methods have no Narwhals equivalent. They rely on row-level
+# iteration or string-based queries that don't translate to Narwhals' lazy,
+# expression-oriented model. They get flagged in the output so the developer
+# knows they need a fundamentally different approach.
 
 _register(
     Rule(

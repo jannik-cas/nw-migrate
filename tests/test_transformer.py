@@ -44,6 +44,7 @@ class TestSortValues:
         assert "descending=False" in result
 
     def test_ascending_variable(self) -> None:
+        """When ascending is a variable (not a literal), we wrap it in `not`."""
         source = _dedent("""\
             def process(df, flag):
                 return df.sort_values('name', ascending=flag)
@@ -52,6 +53,7 @@ class TestSortValues:
         assert "descending=not flag" in result
 
     def test_by_kwarg_unwrapped(self) -> None:
+        """The by= kwarg doesn't exist in Narwhals, so it becomes positional."""
         source = _dedent("""\
             def process(df):
                 return df.sort_values(by='name')
@@ -61,6 +63,7 @@ class TestSortValues:
         assert "by=" not in result
 
     def test_unknown_kwarg_preserved(self) -> None:
+        """Kwargs we don't have a transform for (like key=) are kept as-is."""
         source = _dedent("""\
             def process(df):
                 return df.sort_values('name', key=str.lower)
@@ -133,6 +136,7 @@ class TestSubscriptSelect:
         assert len(findings) == 1
 
     def test_single_string_subscript_ignored(self) -> None:
+        """df['col'] is single-column access, not multi-column select."""
         source = _dedent("""\
             def process(df):
                 return df['col1']
@@ -142,6 +146,7 @@ class TestSubscriptSelect:
         assert len(findings) == 0
 
     def test_slice_subscript_ignored(self) -> None:
+        """Row slicing like df[0:5] is not column selection."""
         source = _dedent("""\
             def process(df):
                 return df[0:5]
@@ -161,6 +166,7 @@ class TestDecorator:
         assert "@nw.narwhalify" in result
 
     def test_not_duplicated_attribute(self) -> None:
+        """If @nw.narwhalify already exists, don't add another one."""
         source = _dedent("""\
             import narwhals as nw
 
@@ -172,6 +178,7 @@ class TestDecorator:
         assert result.count("@nw.narwhalify") == 1
 
     def test_not_duplicated_bare_name(self) -> None:
+        """Also recognize @narwhalify (from direct import) as existing decorator."""
         source = _dedent("""\
             from narwhals import narwhalify
 
@@ -184,6 +191,7 @@ class TestDecorator:
         assert result.count("narwhalify") >= 2  # import + decorator
 
     def test_not_duplicated_call_form(self) -> None:
+        """Also recognize @nw.narwhalify() (with parens) as existing decorator."""
         source = _dedent("""\
             import narwhals as nw
 
@@ -196,6 +204,7 @@ class TestDecorator:
         assert result.count("import narwhals as nw") == 1
 
     def test_not_added_to_non_converted(self) -> None:
+        """Only the function containing Pandas calls gets decorated, not siblings."""
         source = _dedent("""\
             def helper(x):
                 return x + 1
@@ -220,6 +229,7 @@ class TestImport:
         assert "import narwhals as nw" in result
 
     def test_not_duplicated(self) -> None:
+        """If 'import narwhals as nw' already exists, don't add it again."""
         source = _dedent("""\
             import narwhals as nw
 
@@ -230,6 +240,7 @@ class TestImport:
         assert result.count("import narwhals as nw") == 1
 
     def test_placed_after_existing_imports(self) -> None:
+        """The narwhals import should appear after other imports, not before."""
         source = _dedent("""\
             import os
             import sys
@@ -244,6 +255,7 @@ class TestImport:
         assert nw_idx > sys_idx
 
     def test_placed_at_top_when_no_imports(self) -> None:
+        """When there are no existing imports, narwhals goes before the code."""
         source = _dedent("""\
             def process(df):
                 return df.sort_values('name')
@@ -257,6 +269,7 @@ class TestImport:
 
 class TestMediumHardFlagging:
     def test_medium_gets_todo(self) -> None:
+        """MEDIUM calls can't be auto-converted, so they get a TODO comment."""
         source = _dedent("""\
             def process(df):
                 return df.fillna(0)
@@ -267,6 +280,7 @@ class TestMediumHardFlagging:
         assert findings[0].rule.difficulty == Difficulty.MEDIUM
 
     def test_hard_gets_todo(self) -> None:
+        """HARD calls have no Narwhals equivalent and get a TODO comment."""
         source = _dedent("""\
             def process(df):
                 return df.apply(lambda x: x * 2)
@@ -276,6 +290,7 @@ class TestMediumHardFlagging:
         assert findings[0].rule.difficulty == Difficulty.HARD
 
     def test_medium_no_decorator(self) -> None:
+        """Functions with only MEDIUM/HARD calls don't get @nw.narwhalify."""
         source = _dedent("""\
             def process(df):
                 return df.fillna(0)
@@ -286,6 +301,7 @@ class TestMediumHardFlagging:
 
 class TestNoOp:
     def test_no_pandas(self) -> None:
+        """Files without any Pandas calls should pass through unchanged."""
         source = _dedent("""\
             def add(a, b):
                 return a + b
@@ -297,6 +313,7 @@ class TestNoOp:
 
 class TestChainedCalls:
     def test_chained(self) -> None:
+        """Each call in a chain is converted independently."""
         source = _dedent("""\
             def process(df):
                 return df.sort_values('a').drop_duplicates()
@@ -308,6 +325,7 @@ class TestChainedCalls:
 
 class TestNonAttributeCalls:
     def test_plain_function_call_ignored(self) -> None:
+        """Built-in calls like len(df) should not be mistaken for Pandas methods."""
         source = _dedent("""\
             def process(df):
                 result = len(df)
@@ -318,6 +336,7 @@ class TestNonAttributeCalls:
         assert len(findings) == 1
 
     def test_module_level_conversion(self) -> None:
+        """Pandas calls outside any function are converted but don't get a decorator."""
         source = _dedent("""\
             result = df.sort_values('name')
         """)
@@ -328,10 +347,14 @@ class TestNonAttributeCalls:
 
 
 class TestSubscriptDuringTransform:
-    """Tests that hit leave_Subscript in the transformer (Pass 2)."""
+    """Verify that non-list subscripts survive the transformation pass unchanged.
+
+    These tests combine a Pandas method call (to trigger the transformer) with
+    various subscript patterns that should not be touched.
+    """
 
     def test_non_list_subscript_preserved(self) -> None:
-        """Covers leave_Subscript early return for non-list subscripts."""
+        """Single-key subscripts like df['col'] must not be rewritten to .select()."""
         source = _dedent("""\
             def process(df):
                 x = df['col1']
@@ -342,7 +365,7 @@ class TestSubscriptDuringTransform:
         assert "df.sort('name')" in result
 
     def test_multi_slice_subscript_preserved(self) -> None:
-        """Covers _is_list_subscript returning False for multi-slice."""
+        """Multi-dimensional subscripts like arr[1:2, 3:4] should be left alone."""
         source = _dedent("""\
             def process(df, arr):
                 x = arr[1:2, 3:4]
@@ -353,10 +376,10 @@ class TestSubscriptDuringTransform:
 
 
 class TestHelpers:
-    """Direct tests for internal helper functions."""
+    """Direct tests for edge cases in internal helper functions."""
 
     def test_is_narwhalify_decorator_unknown_type(self) -> None:
-        """Covers the fallback return False in _is_narwhalify_decorator."""
+        """A decorator that's not Name, Attribute, or Call should return False."""
         import libcst as cst
 
         from nw_migrate.transformer import _is_narwhalify_decorator
@@ -365,7 +388,7 @@ class TestHelpers:
         assert not _is_narwhalify_decorator(dec)
 
     def test_transform_args_simple_rename(self) -> None:
-        """Covers the else branch in _transform_args (rename without invert)."""
+        """An ArgTransform with just a new_name (no invert) should rename the kwarg."""
         import libcst as cst
 
         from nw_migrate.rules import ArgTransform

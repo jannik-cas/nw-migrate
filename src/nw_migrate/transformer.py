@@ -11,7 +11,13 @@ from nw_migrate.rules import RULES, ArgTransform, Difficulty, Rule
 
 @dataclass
 class Finding:
-    """A detected Pandas usage that can/should be converted."""
+    """Represents a single detected Pandas API call in the source code.
+
+    Each finding maps to one method call (or subscript pattern) that matched
+    a known conversion rule. The enclosing_function field tracks which function
+    the call lives in, so we know where to attach the @nw.narwhalify decorator.
+    Findings at module level (outside any function) have enclosing_function=None.
+    """
 
     line: int
     col: int
@@ -20,17 +26,23 @@ class Finding:
     enclosing_function: str | None
 
 
-# ---------------------------------------------------------------------------
-# Pass 1: Collector — find all Pandas calls matching rules
-# ---------------------------------------------------------------------------
-
-
 class PandasCallCollector(cst.CSTVisitor):
+    """First pass over the CST: walks the tree and records every Pandas call
+    that matches one of our conversion rules.
+
+    This visitor does not modify anything. It collects two things:
+      - findings: the full list of detected Pandas usages (with positions)
+      - functions_needing_decorator: names of functions that contain at least
+        one EASY-level conversion, meaning they should get @nw.narwhalify
+    """
+
     METADATA_DEPENDENCIES = (PositionProvider,)
 
     def __init__(self) -> None:
         self.findings: list[Finding] = []
         self.functions_needing_decorator: set[str] = set()
+        # We maintain a stack of function names so we can handle nested
+        # function definitions and always know which function we're inside.
         self._function_stack: list[str] = []
 
     def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
@@ -41,6 +53,12 @@ class PandasCallCollector(cst.CSTVisitor):
         self._function_stack.pop()
 
     def visit_Call(self, node: cst.Call) -> bool:
+        """Check if a method call matches a known Pandas API we want to convert.
+
+        We only look at attribute calls (obj.method()), not plain function calls
+        like len(df) or print(). This avoids false positives on built-ins that
+        happen to share a name with a Pandas method.
+        """
         if not isinstance(node.func, cst.Attribute):
             return True
 
@@ -62,13 +80,21 @@ class PandasCallCollector(cst.CSTVisitor):
             )
         )
 
+        # Only functions with auto-convertible (EASY) calls get the decorator.
+        # MEDIUM/HARD calls just get TODO comments and don't change signatures.
         if rule.difficulty == Difficulty.EASY and enclosing is not None:
             self.functions_needing_decorator.add(enclosing)
 
         return True
 
     def visit_Subscript(self, node: cst.Subscript) -> bool:
-        """Match df[['col1', 'col2']] — subscript with a List value."""
+        """Detect column selection via df[['col1', 'col2']] syntax.
+
+        In Pandas, passing a list of column names to __getitem__ selects those
+        columns. The Narwhals equivalent is df.select(['col1', 'col2']).
+        We only match subscripts where the index is a literal list — single
+        string keys like df['col'] or slices like df[0:5] are left alone.
+        """
         if not _is_list_subscript(node):
             return True
 
@@ -96,12 +122,16 @@ class PandasCallCollector(cst.CSTVisitor):
         return True
 
 
-# ---------------------------------------------------------------------------
-# Pass 2: Transformer — apply conversions
-# ---------------------------------------------------------------------------
-
-
 class NarwhalsTransformer(cst.CSTTransformer):
+    """Second pass over the CST: applies the actual code transformations.
+
+    This transformer rewrites EASY-level Pandas calls to their Narwhals
+    equivalents (renaming methods, transforming arguments) and attaches the
+    @nw.narwhalify decorator to functions that were modified. MEDIUM and HARD
+    calls are intentionally left untouched here — they only get TODO comments
+    injected as a text post-processing step later.
+    """
+
     def __init__(self, functions_needing_decorator: set[str]) -> None:
         self.functions_needing_decorator = functions_needing_decorator
         self.conversions_made: int = 0
@@ -114,6 +144,12 @@ class NarwhalsTransformer(cst.CSTTransformer):
         original_node: cst.FunctionDef,
         updated_node: cst.FunctionDef,
     ) -> cst.FunctionDef:
+        """Add @nw.narwhalify to functions that received EASY conversions.
+
+        Before adding, we check if the function already has a narwhalify
+        decorator in any of its recognized forms (@nw.narwhalify, @narwhalify,
+        or @nw.narwhalify()) to avoid duplicating it.
+        """
         name = updated_node.name.value
         if name not in self.functions_needing_decorator:
             return updated_node
@@ -140,6 +176,12 @@ class NarwhalsTransformer(cst.CSTTransformer):
         original_node: cst.Call,
         updated_node: cst.Call,
     ) -> cst.BaseExpression:
+        """Rewrite EASY Pandas method calls to their Narwhals equivalents.
+
+        For example, df.sort_values('name', ascending=False) becomes
+        df.sort('name', descending=True). MEDIUM/HARD calls pass through
+        unchanged — they'll get TODO comments in the post-processing step.
+        """
         if not isinstance(updated_node.func, cst.Attribute):
             return updated_node
 
@@ -165,6 +207,11 @@ class NarwhalsTransformer(cst.CSTTransformer):
         original_node: cst.Subscript,
         updated_node: cst.Subscript,
     ) -> cst.BaseExpression:
+        """Rewrite df[['col1', 'col2']] to df.select(['col1', 'col2']).
+
+        Non-list subscripts (single key access, slices, multi-dimensional
+        indexing) pass through without modification.
+        """
         if not _is_list_subscript(updated_node):
             return updated_node
 
@@ -184,12 +231,14 @@ class NarwhalsTransformer(cst.CSTTransformer):
         )
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _is_narwhalify_decorator(dec: cst.Decorator) -> bool:
+    """Check whether a decorator is any form of narwhalify.
+
+    Recognizes three patterns that users might already have in their code:
+      - @nw.narwhalify        (Attribute form)
+      - @narwhalify           (bare Name, from direct import)
+      - @nw.narwhalify()      (Call form, with or without arguments)
+    """
     expr = dec.decorator
     if isinstance(expr, cst.Attribute):
         return (
@@ -205,6 +254,12 @@ def _is_narwhalify_decorator(dec: cst.Decorator) -> bool:
 
 
 def _is_list_subscript(node: cst.Subscript) -> bool:
+    """Return True if the subscript is df[['a', 'b']] style (list of columns).
+
+    We require exactly one slice element whose value is a literal List node.
+    This excludes single-key access (df['col']), slices (df[0:5]), and
+    multi-dimensional indexing (arr[1:2, 3:4]).
+    """
     if not isinstance(node.slice, (list, tuple)) or len(node.slice) != 1:
         return False
     slice_el = node.slice[0]
@@ -217,6 +272,18 @@ def _transform_args(
     args: Sequence[cst.Arg],
     transforms: tuple[ArgTransform, ...],
 ) -> tuple[cst.Arg, ...]:
+    """Apply argument transformations defined by a conversion rule.
+
+    Handles three kinds of argument changes:
+      - Invert a boolean kwarg (ascending=True -> descending=False). For
+        literal True/False we swap the value; for variables we wrap in `not`.
+      - Unwrap a kwarg to positional (by='name' -> just 'name'), used when
+        Narwhals takes the same value as a positional arg instead of a kwarg.
+      - Rename a kwarg (old_name='x' -> new_name='x'), for cases where only
+        the parameter name changed between Pandas and Narwhals.
+
+    Arguments not mentioned in the transforms pass through unchanged.
+    """
     if not transforms:
         return tuple(args)
 
@@ -224,6 +291,7 @@ def _transform_args(
     new_args: list[cst.Arg] = []
 
     for arg in args:
+        # Positional args are never subject to kwarg transforms
         if arg.keyword is None:
             new_args.append(arg)
             continue
@@ -231,6 +299,7 @@ def _transform_args(
         kwarg_name = arg.keyword.value
         transform = transform_map.get(kwarg_name)
 
+        # Unknown kwargs (e.g. key=str.lower on sort_values) are kept as-is
         if transform is None:
             new_args.append(arg)
             continue
@@ -246,6 +315,7 @@ def _transform_args(
                 )
             )
         elif transform.new_name is None:
+            # Unwrap to positional: drop the keyword entirely
             new_args.append(
                 arg.with_changes(
                     keyword=None,
@@ -259,6 +329,12 @@ def _transform_args(
 
 
 def _invert_bool_expr(node: cst.BaseExpression) -> cst.BaseExpression:
+    """Flip a boolean expression: True->False, False->True, var->`not var`.
+
+    Used for the ascending->descending conversion. For literal booleans we
+    can produce clean output (descending=True). For arbitrary expressions
+    like variables we fall back to wrapping with `not`.
+    """
     if isinstance(node, cst.Name):
         if node.value == "True":
             return node.with_changes(value="False")
@@ -270,12 +346,12 @@ def _invert_bool_expr(node: cst.BaseExpression) -> cst.BaseExpression:
     )
 
 
-# ---------------------------------------------------------------------------
-# Import injection
-# ---------------------------------------------------------------------------
-
-
 def _has_narwhals_import(tree: cst.Module) -> bool:
+    """Check if the module already contains 'import narwhals (as ...)'.
+
+    Walks top-level statements looking for an import of the narwhals package.
+    This prevents adding a duplicate import when the user already has one.
+    """
     for stmt in tree.body:
         if isinstance(stmt, cst.SimpleStatementLine):
             for item in stmt.body:
@@ -294,6 +370,12 @@ def _has_narwhals_import(tree: cst.Module) -> bool:
 def _find_last_import_index(
     body: Sequence[cst.SimpleStatementLine | cst.BaseCompoundStatement],
 ) -> int:
+    """Find the position of the last import statement in the module body.
+
+    Returns the index of the last import/from-import line, or -1 if there
+    are no imports. We insert the narwhals import right after this position
+    so it groups naturally with the existing imports.
+    """
     last_idx = -1
     for i, stmt in enumerate(body):
         if isinstance(stmt, cst.SimpleStatementLine):
@@ -305,6 +387,11 @@ def _find_last_import_index(
 
 
 def add_narwhals_import(tree: cst.Module) -> cst.Module:
+    """Insert 'import narwhals as nw' into the module if not already present.
+
+    Places the import after the last existing import statement, or at the
+    very top of the file if there are no other imports.
+    """
     if _has_narwhals_import(tree):
         return tree
 
@@ -332,12 +419,14 @@ def add_narwhals_import(tree: cst.Module) -> cst.Module:
     return tree.with_changes(body=new_body)
 
 
-# ---------------------------------------------------------------------------
-# TODO comment injection (text-level post-processing)
-# ---------------------------------------------------------------------------
-
-
 def inject_todo_comments(source: str, todos: list[tuple[int, str]]) -> str:
+    """Append TODO comments to specific lines in the source text.
+
+    This is a text-level post-processing step (not CST-based) because libcst
+    doesn't have a clean way to attach trailing comments to arbitrary nodes.
+    We process lines in reverse order so that inserting characters on one line
+    doesn't shift the line numbers of subsequent insertions.
+    """
     if not todos:
         return source
     lines = source.splitlines(keepends=True)
@@ -349,36 +438,45 @@ def inject_todo_comments(source: str, todos: list[tuple[int, str]]) -> str:
     return "".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-
 def transform_source(source: str) -> tuple[str, list[Finding]]:
-    """Transform a source string. Returns (output, findings)."""
+    """Main entry point: transform a Python source string from Pandas to Narwhals.
+
+    Runs a two-pass architecture over the concrete syntax tree:
+      1. Collection pass — walks the tree read-only to find all Pandas method
+         calls matching our rules, and identifies which functions need the
+         @nw.narwhalify decorator.
+      2. Transformation pass — rewrites EASY calls (rename methods, transform
+         args), adds decorators, and injects the narwhals import.
+
+    After transformation, we run the collector again on the output to find
+    correct line numbers for MEDIUM/HARD calls (they shifted because we added
+    imports and decorators), then inject TODO comments at those positions.
+
+    Returns the transformed source code and the list of all findings from
+    the original source.
+    """
     tree = cst.parse_module(source)
     wrapper = MetadataWrapper(tree)
 
-    # Pass 1: collect findings
     collector = PandasCallCollector()
     wrapper.visit(collector)
 
     if not collector.findings:
         return source, []
 
-    # Pass 2: transform
     transformer = NarwhalsTransformer(
         functions_needing_decorator=collector.functions_needing_decorator,
     )
     new_tree = tree.visit(transformer)
 
-    # Add import if needed
     if transformer.needs_import:
         new_tree = add_narwhals_import(new_tree)
 
     output = new_tree.code
 
-    # Re-collect on transformed code to get correct line numbers for TODOs
+    # The transformation may have shifted line numbers (added imports,
+    # decorators, etc.), so we re-collect on the transformed code to get
+    # accurate positions for the TODO comments on MEDIUM/HARD calls.
     new_wrapper = MetadataWrapper(cst.parse_module(output))
     post_collector = PandasCallCollector()
     new_wrapper.visit(post_collector)
