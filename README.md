@@ -23,6 +23,12 @@ Or with [uv](https://docs.astral.sh/uv/):
 uv add nw-migrate
 ```
 
+Or run without installing via [uvx](https://docs.astral.sh/uv/guides/tools/):
+
+```bash
+uvx nw-migrate check src/
+```
+
 ## Usage
 
 **Check** what can be converted (no changes made):

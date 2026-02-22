@@ -7,6 +7,7 @@ authors = [
     { name = "Jannik Castenow" }
 ]
 license = {file = "LICENSE"}
+keywords = ["pandas", "narwhals", "migration", "codemod", "polars"]
 requires-python = ">=3.11"
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -23,6 +24,11 @@ dependencies = [
     "libcst>=1.0",
     "click>=8.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/jannik-cas/nw-migrate"
+Repository = "https://github.com/jannik-cas/nw-migrate"
+Changelog = "https://github.com/jannik-cas/nw-migrate/blob/main/CHANGELOG.md"
 
 [project.scripts]
 nw-migrate = "nw_migrate.cli:main"

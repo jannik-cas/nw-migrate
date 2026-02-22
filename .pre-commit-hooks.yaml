@@ -1,5 +1,5 @@
-- id: narwhalify-check
-  name: narwhalify check
-  entry: narwhalify check
+- id: nw-migrate-check
+  name: nw-migrate check
+  entry: nw-migrate check
   language: python
   types: [python]

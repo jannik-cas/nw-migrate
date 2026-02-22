@@ -20,3 +20,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - TODO comment injection for MEDIUM and HARD cases
 - Pre-commit hook support (`nw-migrate-check`)
 - 100% test coverage enforced in CI
+
+[0.1.0]: https://github.com/jannik-cas/nw-migrate/releases/tag/v0.1.0

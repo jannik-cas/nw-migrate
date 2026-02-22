@@ -14,5 +14,9 @@ wheels/
 coverage.xml
 .pytest_cache/
 
-# Linting
+# Linting and type checking
 .ruff_cache/
+.mypy_cache/
+
+# Coverage HTML report
+htmlcov/
