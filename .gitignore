@@ -9,6 +9,14 @@ wheels/
 # Virtual environments
 .venv
 
-# Coverage
+# Testing and coverage
 .coverage
 coverage.xml
+.pytest_cache/
+
+# Linting and type checking
+.ruff_cache/
+.mypy_cache/
+
+# Coverage HTML report
+htmlcov/
